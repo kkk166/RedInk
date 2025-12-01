@@ -1,45 +1,64 @@
 # ============================================
-# 红墨 AI图文生成器 - Docker 镜像
+# 红墨 AI 图文生成器 - Docker 镜像
 # ============================================
 
 # 阶段1: 构建前端
 FROM node:22-slim AS frontend-builder
 
+# 设置工作目录
 WORKDIR /app/frontend
 
-# 安装 pnpm
-RUN npm install -g pnpm
+# 使用 corepack 管理 pnpm，缓存依赖加速重建
+ENV PNPM_HOME=/root/.local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
 
-# 复制前端依赖文件
+# 启用 corepack 并安装 pnpm（使用指定版本避免兼容性问题）
+RUN corepack enable && \
+    corepack prepare pnpm@9.15.0 --activate && \
+    pnpm config set registry https://registry.npmmirror.com && \
+    pnpm --version
+
+# 复制依赖配置文件，避免无关文件干扰缓存
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 
-# 安装依赖
-RUN pnpm install --frozen-lockfile
+# 安装前端依赖（增加重试和详细日志）
+RUN pnpm install --frozen-lockfile --production=false --verbose
 
 # 复制前端源码
 COPY frontend/ ./
 
-# 构建前端
+# 构建前端生产版本
 RUN pnpm build
 
-# ============================================
-# 阶段2: 最终镜像
-FROM python:3.11-slim
 
+# 阶段2: 最终镜像
+FROM python:3.12-slim
+
+# 设置环境变量（运行时优化）
+ENV TZ=Asia/Shanghai
+
+# 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+# 安装运行时必需的系统依赖
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
-# 安装 uv
+# 安装 uv (Python 包管理器)
 RUN pip install --no-cache-dir uv
 
-# 复制 Python 项目配置
-COPY pyproject.toml uv.lock* ./
+# 复制 Python 项目配置文件
+COPY pyproject.toml uv.lock ./
 
-# 安装 Python 依赖
-RUN uv sync --no-dev
+# # 安装 Python 依赖
+RUN uv sync --frozen --no-dev
 
 # 复制后端代码
 COPY backend/ ./backend/
@@ -48,16 +67,16 @@ COPY backend/ ./backend/
 COPY docker/text_providers.yaml ./
 COPY docker/image_providers.yaml ./
 
-# 从构建阶段复制前端产物
+# 复制前端构建产物
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # 创建数据目录
 RUN mkdir -p output history
 
 # 设置环境变量
-ENV FLASK_DEBUG=False
-ENV FLASK_HOST=0.0.0.0
-ENV FLASK_PORT=12398
+ENV FLASK_DEBUG=False \
+    FLASK_HOST=0.0.0.0 \
+    FLASK_PORT=12398
 
 # 暴露端口
 EXPOSE 12398

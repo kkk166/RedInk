@@ -1,58 +1,84 @@
+# 工作流名称
 name: Build and Push Docker Image
 
+# 触发事件，当向master分支推送代码，或者推送标签名以v开头的标签时触发工作流
 on:
   push:
-    branches:
-      - main
+    branches: [master, dev]
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 env:
-  DOCKER_USERNAME: histonemax
-  IMAGE_NAME: redink
+  # 容器注册表，这里使用GitHub Container Registry（ghcr.io）
+  REGISTRY: ghcr.io
+  # 镜像名称，使用GitHub仓库的全名
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-and-push:
+    name: 构建并推送
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
-      - name: Checkout 代码
+      - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 设置 Docker Buildx
+      - name: 准备 QEMU（多架构）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 启用 Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: 登录 Docker Hub
+      - name: 登录 GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ env.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 提取 Docker 元数据
+      - name: 登录 Docker Hub（可选）
+        if: secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: 生成镜像标签与元数据
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ secrets.DOCKERHUB_USERNAME != '' && format('docker.io/{0}/redink', secrets.DOCKERHUB_USERNAME) || '' }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=ref,event=tag
+            type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=RedInk
+            org.opencontainers.image.description=RedInk-小红书AI图文生成器
 
-      - name: 构建并推送 Docker 镜像
-        uses: docker/build-push-action@v5
+      - name: 构建并推送镜像（开启缓存）
+        uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          file: ./Dockerfile
           push: true
+          pull: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+      
       - name: 输出镜像信息
         run: |
           echo "🎉 Docker 镜像构建成功！"
