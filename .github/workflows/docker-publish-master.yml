@@ -66,9 +66,12 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME != '' && format('docker.io/{0}/redink', secrets.DOCKERHUB_USERNAME) || '' }}
           tags: |
             type=ref,event=branch
-            type=ref,event=tag
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}.{{patch}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
           labels: |
             org.opencontainers.image.title=RedInk
             org.opencontainers.image.description=RedInk-小红书AI图文生成器
