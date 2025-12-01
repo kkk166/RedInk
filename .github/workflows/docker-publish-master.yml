@@ -1,5 +1,5 @@
 # 工作流名称
-name: Build and Push Docker Image
+name: Master Build and Push Docker Image
 
 # 触发事件，当向master分支推送代码，或者推送标签名以v开头的标签时触发工作流
 on:
